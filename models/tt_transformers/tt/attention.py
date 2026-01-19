@@ -38,6 +38,15 @@ class Attention(LightweightModule):
         self.hidden_size = configuration.dim
         self.n_heads = configuration.n_heads
         self.head_dim = configuration.head_dim
+        
+        # Model-specific behavior (Phi-1)
+        model_name = getattr(configuration, "model_name", "") or getattr(configuration, "hf_model_name", "")
+        self.is_phi1 = (model_name == "phi-1") or ("microsoft/phi-1" in str(model_name))
+        
+        # Phi-1 uses partial rotary: rotary_dim = head_dim * partial_rotary_factor (0.5 => 32 when head_dim=64)
+        self.rotary_dim = getattr(configuration, "rotary_dim", self.head_dim)
+        assert self.rotary_dim <= self.head_dim and self.rotary_dim % 2 == 0
+
         self.max_seq_len = configuration.max_seq_len
         self.max_batch_size = configuration.max_batch_size
         self.n_kv_heads = configuration.n_kv_heads
@@ -443,6 +452,48 @@ class Attention(LightweightModule):
         k_tensor = ttnn.to_memory_config(k_tensor, k_mem_config)
         return q_tensor, k_tensor
 
+
+    def _apply_partial_rope(self, x: ttnn.Tensor, rot_mats, transformation_mat, is_decode_mode: bool):
+        # Full rotary: keep existing behavior
+        if self.rotary_dim == self.head_dim:
+            return ttnn.experimental.rotary_embedding_llama(
+                x,
+                rot_mats[0],
+                rot_mats[1],
+                transformation_mat,
+                is_decode_mode=is_decode_mode,
+            )
+
+        # Partial rotary (Phi-1)
+        # Split last dim: [0:rotary_dim] rotated, [rotary_dim:head_dim] passthrough
+        x_rope = ttnn.slice(
+            x,
+            (0, 0, 0, 0),
+            (x.shape[0], x.shape[1], x.shape[2], self.rotary_dim),
+        )
+
+        x_pass = ttnn.slice(
+            x,
+            (0, 0, 0, self.rotary_dim),
+            (x.shape[0], x.shape[1], x.shape[2], self.head_dim),
+        )
+
+        x_rope = ttnn.experimental.rotary_embedding_llama(
+            x_rope,
+            rot_mats[0],
+            rot_mats[1],
+            transformation_mat,
+            is_decode_mode=is_decode_mode,
+        )
+
+        out = ttnn.concat([x_rope, x_pass], dim=3)
+
+        ttnn.deallocate(x_rope)
+        ttnn.deallocate(x_pass)
+
+        return out
+    
+
     def forward_decode(self, x: ttnn.Tensor, current_pos, rot_mats=None, page_table=None, kv_cache=None) -> ttnn.Tensor:
         """
         x: (seq_len, 1, batch, dim)
@@ -524,24 +575,36 @@ class Attention(LightweightModule):
         ttnn.deallocate(xqkv_fused)
 
         # Q, K Rotary Embeddings
-        if self.args.use_qk_fused:
+        if self.args.use_qk_fused and (not self.is_phi1):
+            # ORIGINAL fused path (unchanged)
             q_heads_pre_rot_1BQD, k_heads_pre_rot_1BKD = self.to_qk_fused_memory_config(
                 q_heads_pre_rot_1BQD, k_heads_pre_rot_1BKD
             )
-
             q_heads_1BQD, k_heads_1BKD = ttnn.experimental.rotary_embedding_llama_fused_qk(
-                q_heads_pre_rot_1BQD, k_heads_pre_rot_1BKD, rot_mats[0], rot_mats[1], self.transformation_mats["decode"]
+                q_heads_pre_rot_1BQD,
+                k_heads_pre_rot_1BKD,
+                rot_mats[0],
+                rot_mats[1],
+                self.transformation_mats["decode"],
             )
         else:
-            # Q Rotary Embeddings
-            q_heads_1BQD = ttnn.experimental.rotary_embedding_llama(
-                q_heads_pre_rot_1BQD, rot_mats[0], rot_mats[1], self.transformation_mats["decode"], is_decode_mode=True
-            )
+            # ORIGINAL non-fused path, except Phi-1 uses partial rotary
+            if self.is_phi1 and self.rotary_dim != self.head_dim:
+                q_heads_1BQD = self._apply_partial_rope(
+                    q_heads_pre_rot_1BQD, rot_mats, self.transformation_mats["decode"], is_decode_mode=True
+                )
+                k_heads_1BKD = self._apply_partial_rope(
+                    k_heads_pre_rot_1BKD, rot_mats, self.transformation_mats["decode"], is_decode_mode=True
+                )
+            else:
+                # ORIGINAL calls (unchanged)
+                q_heads_1BQD = ttnn.experimental.rotary_embedding_llama(
+                    q_heads_pre_rot_1BQD, rot_mats[0], rot_mats[1], self.transformation_mats["decode"], is_decode_mode=True
+                )
+                k_heads_1BKD = ttnn.experimental.rotary_embedding_llama(
+                    k_heads_pre_rot_1BKD, rot_mats[0], rot_mats[1], self.transformation_mats["decode"], is_decode_mode=True
+                )
 
-            # K Rotary Embeddings
-            k_heads_1BKD = ttnn.experimental.rotary_embedding_llama(
-                k_heads_pre_rot_1BKD, rot_mats[0], rot_mats[1], self.transformation_mats["decode"], is_decode_mode=True
-            )
         ttnn.deallocate(q_heads_pre_rot_1BQD)
         ttnn.deallocate(k_heads_pre_rot_1BKD)
 
@@ -811,25 +874,41 @@ class Attention(LightweightModule):
         if q_heads_1QSD_pre_rot.dtype != ttnn.bfloat16:  # Rotary embeddings require bfloat16 inputs
             q_heads_1QSD_pre_rot = ttnn.typecast(q_heads_1QSD_pre_rot, dtype=ttnn.bfloat16)
 
-        q_heads_1QSD = ttnn.experimental.rotary_embedding_llama(
-            q_heads_1QSD_pre_rot,
-            rot_mats[0],
-            rot_mats[1],
-            self.transformation_mats["prefill"],
-            is_decode_mode=False,
-        )
+        if self.is_phi1 and (self.rotary_dim != self.head_dim):
+            q_heads_1QSD = self._apply_partial_rope(
+                q_heads_1QSD_pre_rot,
+                rot_mats,
+                self.transformation_mats["prefill"],
+                is_decode_mode=False,
+            )
+        else:
+            q_heads_1QSD = ttnn.experimental.rotary_embedding_llama(
+                q_heads_1QSD_pre_rot,
+                rot_mats[0],
+                rot_mats[1],
+                self.transformation_mats["prefill"],
+                is_decode_mode=False,
+            )
         ttnn.deallocate(q_heads_1QSD_pre_rot)
 
         if k_heads_1KSD_pre_rot.dtype != ttnn.bfloat16:  # Rotary embeddings require bfloat16 inputs
             k_heads_1KSD_pre_rot = ttnn.typecast(k_heads_1KSD_pre_rot, dtype=ttnn.bfloat16)
 
-        k_heads_1KSD = ttnn.experimental.rotary_embedding_llama(
-            k_heads_1KSD_pre_rot,
-            rot_mats[0],
-            rot_mats[1],
-            self.transformation_mats["prefill"],
-            is_decode_mode=False,
-        )
+        if self.is_phi1 and (self.rotary_dim != self.head_dim):
+            k_heads_1KSD = self._apply_partial_rope(
+                k_heads_1KSD_pre_rot,
+                rot_mats,
+                self.transformation_mats["prefill"],
+                is_decode_mode=False,
+            )
+        else:
+            k_heads_1KSD = ttnn.experimental.rotary_embedding_llama(
+                k_heads_1KSD_pre_rot,
+                rot_mats[0],
+                rot_mats[1],
+                self.transformation_mats["prefill"],
+                is_decode_mode=False,
+            )
         ttnn.deallocate(k_heads_1KSD_pre_rot)
 
         # Fill KV-Cache

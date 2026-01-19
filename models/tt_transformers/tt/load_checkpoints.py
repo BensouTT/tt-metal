@@ -644,6 +644,9 @@ def map_hf_to_meta_keys(loaded_weights):
         ("q_norm", "q_norm"),
         ("k_norm", "k_norm"),
         ("patch_conv.weight", "patch_conv._linear.weight"),  # Minimal addition for Mistral vision
+        ("fc1", "w1"),
+        ("fc2", "w2"),
+
     ]
     return replace_keys(loaded_weights, replacements)
 
