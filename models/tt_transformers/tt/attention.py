@@ -42,7 +42,6 @@ class Attention(LightweightModule):
         
         # Phi-1 uses partial rotary: rotary_dim = head_dim * partial_rotary_factor (0.5 => 32 when head_dim=64)
         self.rotary_dim = getattr(configuration, "rotary_dim", self.head_dim)
-        assert self.rotary_dim <= self.head_dim and self.rotary_dim % 2 == 0
         self.max_seq_len = configuration.max_seq_len
         self.max_batch_size = configuration.max_batch_size
         self.n_kv_heads = configuration.n_kv_heads
@@ -484,7 +483,7 @@ class Attention(LightweightModule):
             )
         else:
             # ORIGINAL non-fused path, except Phi-1 uses partial rotary
-            if self.is_phi1 and self.rotary_dim != self.head_dim:
+            if self.is_phi1:
                 q_heads_1BQD = self._apply_partial_rope(
                     q_heads_pre_rot_1BQD, rot_mats, self.transformation_mats["decode"], is_decode_mode=True
                 )
@@ -762,7 +761,7 @@ class Attention(LightweightModule):
         if q_heads_1QSD_pre_rot.dtype != ttnn.bfloat16:  # Rotary embeddings require bfloat16 inputs
             q_heads_1QSD_pre_rot = ttnn.typecast(q_heads_1QSD_pre_rot, dtype=ttnn.bfloat16)
 
-        if self.is_phi1 and (self.rotary_dim != self.head_dim):
+        if self.is_phi1:
             q_heads_1QSD = self._apply_partial_rope(
                 q_heads_1QSD_pre_rot,
                 rot_mats,
@@ -783,7 +782,7 @@ class Attention(LightweightModule):
         if k_heads_1KSD_pre_rot.dtype != ttnn.bfloat16:  # Rotary embeddings require bfloat16 inputs
             k_heads_1KSD_pre_rot = ttnn.typecast(k_heads_1KSD_pre_rot, dtype=ttnn.bfloat16)
 
-        if self.is_phi1 and (self.rotary_dim != self.head_dim):
+        if self.is_phi1:
             k_heads_1KSD = self._apply_partial_rope(
                 k_heads_1KSD_pre_rot,
                 rot_mats,
