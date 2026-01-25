@@ -631,8 +631,6 @@ def map_hf_to_meta_keys(loaded_weights):
         ("post_attention_layernorm", "ffn_norm"),
         ("self_attn", "attention"),
         ("mlp", "feed_forward"),
-        ("fc1", "w1"),
-        ("fc2", "w2"),
         ("gate_proj", "w1"),
         ("down_proj", "w2"),
         ("up_proj", "w3"),
@@ -643,6 +641,16 @@ def map_hf_to_meta_keys(loaded_weights):
         ("q_norm", "q_norm"),
         ("k_norm", "k_norm"),
     ]
+    # Phi-1 uses MLP naming: mlp.fc1 / mlp.fc2 (instead of gate_proj/down_proj/up_proj)
+    # Only add these replacements when the checkpoint actually contains those keys.
+    hf_keys = loaded_weights.keys() if hasattr(loaded_weights, "keys") else []
+    is_phi1 = any(".mlp.fc1." in k or ".mlp.fc2." in k or k.endswith("mlp.fc1.weight") or k.endswith("mlp.fc2.weight")
+                 for k in hf_keys)
+    if is_phi1:
+        key_replacement_pairs.extend([
+            ("fc1", "w1"),
+            ("fc2", "w2"),
+        ])
     return replace_keys(loaded_weights, replacements)
 
 
