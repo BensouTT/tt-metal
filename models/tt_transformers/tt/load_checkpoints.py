@@ -631,6 +631,8 @@ def map_hf_to_meta_keys(loaded_weights):
         ("post_attention_layernorm", "ffn_norm"),
         ("self_attn", "attention"),
         ("mlp", "feed_forward"),
+        ("fc1", "w1"),
+        ("fc2", "w2"),
         ("gate_proj", "w1"),
         ("down_proj", "w2"),
         ("up_proj", "w3"),
