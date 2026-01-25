@@ -615,12 +615,19 @@ def flatten_conv_linear(state_dict):
     return state_dict
 
 
-def map_hf_to_meta_keys(loaded_weights):
+def map_hf_to_meta_keys(loaded_weights):    
     """
     Map Hugging Face checkpoint keys to Meta checkpoint keys.
     You can use this to support other models by adding more mappings.
     See replace_keys for more details on the format of replacements.
     """
+    
+    # Check the HF_MODEL environment variable
+    hf_model = os.getenv("HF_MODEL", "").strip()
+    # If the model explicitly matches Phi-1 or Phi-1.5, set flag
+    is_phi1 = hf_model in {"microsoft/phi-1"}
+
+
     replacements = [
         ("^emb.weight", "weight"),
         ("model.language_model.", ""),
@@ -641,11 +648,7 @@ def map_hf_to_meta_keys(loaded_weights):
         ("q_norm", "q_norm"),
         ("k_norm", "k_norm"),
     ]
-    # Phi-1 uses MLP naming: mlp.fc1 / mlp.fc2 (instead of gate_proj/down_proj/up_proj)
-    # Only add these replacements when the checkpoint actually contains those keys.
-    hf_keys = loaded_weights.keys() if hasattr(loaded_weights, "keys") else []
-    is_phi1 = any(".mlp.fc1." in k or ".mlp.fc2." in k or k.endswith("mlp.fc1.weight") or k.endswith("mlp.fc2.weight")
-                 for k in hf_keys)
+    
     if is_phi1:
         key_replacement_pairs.extend([
             ("fc1", "w1"),
