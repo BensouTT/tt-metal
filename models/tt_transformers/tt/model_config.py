@@ -2340,6 +2340,7 @@ class ModelArgs:
             "Llama-3.2-11B": "meta-llama/Llama-3.2-11B-Vision-Instruct",
             "Llama-3.2-90B": "meta-llama/Llama-3.2-90B-Vision-Instruct",
             "Mistral-7B": "mistralai/Mistral-7B-Instruct-v0.3",
+            "Phi-1": "microsoft/Phi-1",
             "Phi-3-mini-128k-instruct": "microsoft/Phi-3-mini-128k-instruct",
         }
 
