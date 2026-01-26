@@ -625,7 +625,7 @@ def map_hf_to_meta_keys(loaded_weights):
     # Check the HF_MODEL environment variable
     hf_model = os.getenv("HF_MODEL", "").strip()
     # If the model explicitly matches Phi-1 or Phi-1.5, set flag
-    is_phi1 = hf_model in {"microsoft/phi-1"}
+    is_phi1 = hf_model in {"microsoft/Phi-1"}
 
 
     replacements = [

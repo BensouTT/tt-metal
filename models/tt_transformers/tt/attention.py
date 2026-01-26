@@ -38,7 +38,7 @@ class Attention(LightweightModule):
         self.head_dim = configuration.head_dim
         # Model-specific behavior (Phi-1)
         model_name = getattr(configuration, "model_name", "") or getattr(configuration, "hf_model_name", "")
-        self.is_phi1 = (model_name == "phi-1") or ("microsoft/phi-1" in str(model_name))
+        self.is_phi1 = (model_name == "Phi-1") or ("microsoft/Phi-1" in str(model_name))
         # Phi-1 uses partial rotary: rotary_dim = head_dim * partial_rotary_factor (0.5 => 32 when head_dim=64)
         self.rotary_dim = getattr(configuration, "rotary_dim", self.head_dim)
         self.max_seq_len = configuration.max_seq_len
