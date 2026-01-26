@@ -2386,6 +2386,8 @@ class ModelArgs:
                     fallback_tokenizer_path = "meta-llama/Llama-3.2-3B-Instruct"
                 elif "mistral" in model_name_lower and "7b" in model_name_lower:
                     fallback_tokenizer_path = "mistralai/Mistral-7B-Instruct-v0.3"
+                elif "phi-1" in model_name_lower:
+                    fallback_tokenizer_path = "microsoft/Phi-1"    
                 elif "phi-3-mini" in model_name_lower and "128k" in model_name_lower and "instruct" in model_name_lower:
                     fallback_tokenizer_path = "microsoft/Phi-3-mini-128k-instruct"
 
