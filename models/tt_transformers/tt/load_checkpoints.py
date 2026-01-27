@@ -651,6 +651,7 @@ def map_hf_to_meta_keys(loaded_weights):
     
     if is_phi1:
         replacements.extend([
+            ("attn.c_proj", "attention.wo"),
             ("fc1", "w1"),
             ("fc2", "w2"),
         ])
